@@ -12,8 +12,9 @@ Gem::Specification.new do |gem|
   gem.test_files    = gem.files.grep(%r{^(test|spec|features)/})
   gem.name          = "elevate"
   gem.require_paths = ["lib"]
+  gem.license       = 'MIT'
   gem.version       = Elevate::VERSION
 
-  gem.add_development_dependency 'rake', '>= 0.9.0'
+  gem.add_development_dependency 'rake'
   gem.add_development_dependency 'webstub', '~> 0.6.0'
 end

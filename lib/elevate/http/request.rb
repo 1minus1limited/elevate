@@ -78,11 +78,12 @@ module HTTP
         @request.setValue(value.to_s, forHTTPHeaderField:key.to_s)
       end
 
+      #@cache = self.class.cache
       @response = Response.new
       @response.url = url
 
       @connection = nil
-      @promise = Promise.new
+      @future = Future.new
     end
 
     # Cancels an in-flight request.
@@ -95,10 +96,10 @@ module HTTP
     def cancel
       return unless sent?
 
-      NetworkThread.cancel(@connection)
+      NetworkThread.cancel(@connection) if @connection
       ActivityIndicator.instance.hide
 
-      @promise.fulfill(nil)
+      @future.fulfill(nil)
     end
 
     # Returns a response to this request, sending it if necessary
@@ -114,7 +115,7 @@ module HTTP
         send
       end
 
-      @promise.value
+      @future.value
     end
 
     # Sends this request. The caller is not blocked.
@@ -124,6 +125,7 @@ module HTTP
     # @api public
     def send
       @connection = NSURLConnection.alloc.initWithRequest(@request, delegate:self, startImmediately:false)
+      @request = nil
 
       NetworkThread.start(@connection)
       ActivityIndicator.instance.show
@@ -141,6 +143,15 @@ module HTTP
 
     private
 
+    def self.cache
+      Dispatch.once do
+        @cache = NSURLCache.alloc.initWithMemoryCapacity(0, diskCapacity: 0, diskPath: nil)
+        NSURLCache.setSharedURLCache(cache)
+      end
+
+      @cache
+    end
+
     def connection(connection, didReceiveResponse: response)
       @response.headers = response.allHeaderFields
       @response.status_code = response.statusCode
@@ -151,22 +162,29 @@ module HTTP
     end
 
     def connection(connection, didFailWithError: error)
+      @connection = nil
+
       puts "ERROR: #{error.localizedDescription} (code: #{error.code})" unless RUBYMOTION_ENV == "test"
 
       @response.error = error
-      @response.freeze
 
       ActivityIndicator.instance.hide
 
-      @promise.fulfill(@response)
+      response = @response
+      @response = nil
+
+      @future.fulfill(response)
     end
 
     def connectionDidFinishLoading(connection)
-      @response.freeze
+      @connection = nil
 
       ActivityIndicator.instance.hide
 
-      @promise.fulfill(@response)
+      response = @response
+      @response = nil
+
+      @future.fulfill(response)
     end
 
     def connection(connection, willSendRequest: request, redirectResponse: response)

@@ -8,33 +8,12 @@ module Elevate
     #   newly initialized instance
     #
     # @api private
-    def initWithTarget(target, args:args)
+    def initWithTarget(target, args: args, channel: channel)
       if init
         @coordinator = IOCoordinator.new
-        @context = TaskContext.new(args, &target)
-        @timeout_callback = nil
-        @timer = nil
-        @update_callback = nil
-        @finish_callback = nil
-
-        setCompletionBlock(lambda do
-          if @finish_callback
-            @finish_callback.call(@result, @exception) unless isCancelled
-          end
-
-          Dispatch::Queue.main.sync do
-            @context = nil
-
-            if @timer
-              @timer.invalidate
-              @timer = nil
-            end
-
-            @timeout_callback = nil
-            @update_callback = nil
-            @finish_callback = nil
-          end
-        end)
+        @context = TaskContext.new(target, channel, args)
+        @exception = nil
+        @result = nil
       end
 
       self
@@ -51,56 +30,26 @@ module Elevate
       super
     end
 
-    # Returns information about this task.
-    #
-    # @return [String]
-    #   String suitable for debugging purposes.
-    #
-    # @api public
-    def inspect
-      details = []
-      details << "<canceled>" if @coordinator.cancelled?
-
-      "#<#{self.class.name}: #{details.join(" ")}>"
-    end
-
-    # Logs debugging information in certain configurations.
-    #
-    # @return [void]
-    #
-    # @api private
-    def log(line)
-      puts line unless RUBYMOTION_ENV == "test"
-    end
-
     # Runs the specified task.
     #
     # @return [void]
     #
     # @api private
     def main
-      log " START: #{inspect}"
-
       @coordinator.install
 
       begin
         unless @coordinator.cancelled?
-          @result = @context.execute do |*args|
-            @update_callback.call(*args) if @update_callback
-          end
+          @result = @context.execute
         end
 
-      rescue Exception => e
+      rescue => e
         @exception = e
-
-        if e.is_a?(TimeoutError)
-          @timeout_callback.call if @timeout_callback
-        end
       end
 
       @coordinator.uninstall
 
-      log "FINISH: #{inspect}"
+      @context = nil
     end
 
     # Returns the exception that terminated this task, if any.
@@ -123,96 +72,14 @@ module Elevate
     # @api public
     attr_reader :result
 
-    # Sets the callback to be run upon completion of this task. Do not call
-    # this method after the task has started.
-    #
-    # @param callback [Elevate::Callback]
-    #   completion callback
+    # Cancels any waiting operation with a TimeoutError, interrupting
+    # execution. This is not the same as #cancel.
     #
     # @return [void]
-    #
-    # @api private
-    def on_finish=(callback)
-      @finish_callback = callback
-    end
-
-    # Sets the callback to be run when this task is queued.
-    #
-    # Do not call this method after the task has started.
-    #
-    # @param callback [Elevate::Callback]
-    #   callback to be invoked when queueing
-    #
-    # @return [void]
-    #
-    # @api private
-    def on_start=(callback)
-      start_callback = callback
-      start_callback.retain
-
-      Dispatch::Queue.main.async do
-        start_callback.call unless isCancelled
-        start_callback.release
-      end
-    end
-
-    # Handles timeout expiration.
-    #
-    # @return [void]
-    #
-    # @api private
-    def on_timeout_elapsed(timer)
-      @coordinator.cancel(TimeoutError)
-    end
-
-    # Sets the timeout callback.
-    #
-    # @param callback [Elevate::Callback]
-    #   callback to run on timeout
-    #
-    # @return [void]
-    #
-    # @api private
-    def on_timeout=(callback)
-      @timeout_callback = callback
-    end
-
-    # Sets the update callback, which is invoked for any yield statements in the task.
-    #
-    # @param callback [Elevate::Callback]
-    # @return [void]
-    #
-    # @api private
-    def on_update=(callback)
-      @update_callback = callback
-    end
-
-    # Sets the timeout interval for this task.
-    #
-    # The timeout starts when the task is queued, not when it is started.
-    #
-    # @param interval [Fixnum]
-    #   seconds to allow for task completion
-    #
-    # @return [void]
-    #
-    # @api private
-    def timeout=(interval)
-      @timer = NSTimer.scheduledTimerWithTimeInterval(interval,
-                                                      target: self,
-                                                      selector: :"on_timeout_elapsed:",
-                                                      userInfo: nil,
-                                                      repeats: false)
-    end
-
-    # Returns whether this task timed out.
-    #
-    # @return [Boolean]
-    #   true if this task was aborted due to a time out.
     #
     # @api public
-    def timed_out?
-      @exception.class == TimeoutError
+    def timeout
+      @coordinator.cancel(TimeoutError)
     end
   end
 end
